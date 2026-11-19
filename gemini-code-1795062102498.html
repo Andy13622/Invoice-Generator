@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Invoice Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- SheetJS for Excel Parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Tesseract.js for OCR parsing from photo quotations -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1a2332;
+    --surface: #243044;
+    --surface2: #2d3b54;
+    --border: #3b4d6c;
+    --accent: #5b8def;
+    --accent2: #e26d5c;
+    --text: #f0f4f8;
+    --muted: #8ca3c7;
+    --success: #52c41a;
+    --radius: 12px;
+  }
+
+  html { font-size: 16px; }
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* ── Grain overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 0; opacity: 0.5;
+  }
+
+  /* ── Layout ── */
+  .app { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+
+  /* ── Left Panel (Form) ── */
+  .panel-form {
+    padding: 40px 36px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    max-height: 100vh;
+  }
+
+  /* ── Right Panel (Preview) ── */
+  .panel-preview {
+    padding: 40px 36px;
+    background: #131a26;
+    overflow-y: auto;
+    max-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ── Header ── */
+  .app-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .logo-mark {
+    width: 40px; height: 40px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    font-family: 'Playfair Display', serif;
+    font-weight: 900; font-size: 20px;
+    color: #ffffff;
+  }
+  .logo-text {
+    font-family: 'Playfair Display', serif;
+    font-size: 22px; font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .logo-text span { color: var(--accent); }
+
+  /* ── Section ── */
+  .section {
+    margin-bottom: 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 12px 18px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-header::before {
+    content: '';
+    width: 3px; height: 12px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  .section-body { padding: 18px; }
+
+  /* ── Grid row ── */
+  .row { display: grid; gap: 14px; }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+  .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .row-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  /* ── Field ── */
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .field input, .field select, .field textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    font-size: 13.5px;
+    padding: 8px 11px;
+    width: 100%;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+    resize: vertical;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.2);
+  }
+  .field select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238ca3c7' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+
+  /* ── Line Items Table ── */
+  .items-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .items-table thead tr {
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .items-table th {
+    padding: 9px 10px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .items-table th:not(:first-child) { text-align: right; }
+  .items-table td { padding: 6px 8px; vertical-align: middle; }
+  .items-table td:not(:first-child) { text-align: right; }
+  .items-table tr { border-bottom: 1px solid var(--border); }
+  .items-table input, .items-table textarea {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px;
+    padding: 5px 7px;
+    width: 100%;
+    outline: none;
+    text-align: inherit;
+    transition: border-color 0.15s;
+  }
+  .items-table input:focus, .items-table textarea:focus { border-color: var(--accent); background: rgba(91, 141, 239, 0.08); }
+  .items-table textarea {
+    resize: none;
+    overflow: hidden;
+    line-height: 1.5;
+    min-height: 32px;
+    display: block;
+    vertical-align: top;
+  }
+  .items-table td { vertical-align: top; padding-top: 8px; }
+  .item-amount { font-weight: 600; color: var(--accent); white-space: nowrap; min-width: 90px; display: inline-block; text-align: right; }
+  .remove-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 18px; line-height: 1;
+    padding: 2px 6px; border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+  }
+  .remove-btn:hover { color: var(--accent2); background: rgba(226, 109, 92, 0.15); }
+
+  /* ── Buttons ── */
+  .add-item-btn, .file-btn {
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--accent);
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .add-item-btn:hover, .file-btn:hover { border-color: var(--accent); background: rgba(91, 141, 239, 0.1); }
+
+  /* ── Totals ── */
+  .totals { padding-top: 12px; display: flex; flex-direction: column; gap: 0; }
+  .tot-row {
+    display: flex; justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .tot-row span:last-child { color: var(--text); font-weight: 500; }
+  .tot-row.tax-row { align-items: center; gap: 10px; }
+  .tot-row.tax-row .tax-inputs { display: flex; align-items: center; gap: 6px; }
+  .tax-input-small {
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 13px !important;
+    padding: 4px 7px !important;
+    width: 58px !important;
+    text-align: right !important;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .tax-input-small:focus { border-color: var(--accent) !important; }
+  .total-final {
+    display: flex; justify-content: space-between;
+    padding: 14px 16px;
+    margin-top: 10px;
+    background: var(--accent);
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 16px;
+    color: #ffffff;
+  }
+
+  /* ── Download Button ── */
+  .download-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 15px 32px;
+    cursor: pointer;
+    width: 100%;
+    letter-spacing: 0.02em;
+    transition: transform 0.15s, box-shadow 0.15s, background 0.2s;
+    box-shadow: 0 8px 32px rgba(91, 141, 239, 0.35);
+    margin-top: 8px;
+  }
+  .download-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(91, 141, 239, 0.5); }
+  .download-btn:active { transform: translateY(0); }
+  .download-btn:disabled { background: var(--muted); box-shadow: none; cursor: not-allowed; transform: none; color: #555; }
+  .status-msg { text-align: center; font-size: 13px; font-weight: 500; margin-top: 8px; min-height: 20px; }
+  .status-ok { color: var(--success); }
+  .status-err { color: var(--accent2); }
+
+  /* ── Preview Panel ── */
+  .preview-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .preview-label::before { content: ''; width: 3px; height: 12px; background: var(--accent2); border-radius: 2px; }
+
+  /* ── Invoice Preview Card ── */
+  .inv-card {
+    background: #fff;
+    border-radius: 12px;
+    overflow: hidden;
+    font-family: 'Outfit', sans-serif;
+    color: #1a2332;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .inv-header {
+    background: #1e2d42;
+    color: #fff;
+    padding: 28px 36px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .inv-title { font-family: 'Playfair Display', serif; font-size: 30px; font-weight: 900; letter-spacing: -1px; }
+  .inv-num { color: #8ca3c7; font-size: 13px; font-weight: 600; margin-top: 2px; }
+  .inv-from { text-align: right; font-size: 11.5px; color: #b0c2de; line-height: 1.7; }
+  .inv-from-name { color: #fff; font-weight: 600; font-size: 13px; }
+  .inv-stripe { height: 4px; background: linear-gradient(90deg, #3b5998, #5b8def); }
+  .inv-meta {
+    display: grid; grid-template-columns: 1fr 1fr;
+    background: #f0f4f8;
+    border-bottom: 1px solid #d0dbe7;
+  }
+  .inv-bill { padding: 16px 36px; border-right: 1px solid #d0dbe7; }
+  .inv-dates { padding: 16px 36px; display: flex; gap: 28px; }
+  .inv-lbl { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #5b7398; margin-bottom: 4px; }
+  .inv-val { font-size: 13.5px; font-weight: 700; color: #1e2d42; }
+  .inv-sub { font-size: 11.5px; color: #4a6080; margin-top: 1px; }
+
+  .inv-body { padding: 0 36px; flex: 1; }
+  .inv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 18px 0; }
+  .inv-table th {
+    padding: 0 0 8px; text-align: left;
+    font-size: 9.5px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; color: #5b7398;
+    border-bottom: 2px solid #1e2d42;
+  }
+  .inv-table th:not(:first-child) { text-align: right; }
+  .inv-table td { padding: 10px 0; border-bottom: 1px solid #d0dbe7; font-size: 13px; }
+  .inv-table td:not(:first-child) { text-align: right; }
+  .inv-table td:last-child { font-weight: 600; }
+
+  .inv-totals { display: flex; justify-content: flex-end; margin-bottom: 24px; }
+  .inv-totals-inner { width: 220px; font-size: 13px; }
+  .inv-tot-row { display: flex; justify-content: space-between; padding: 5px 0; color: #5b7398; border-bottom: 1px solid #d0dbe7; }
+  .inv-tot-row span:last-child { color: #1e2d42; font-weight: 500; }
+  .inv-tot-final { display: flex; justify-content: space-between; padding: 12px 14px; margin-top: 6px; background: #1e2d42; color: #fff; border-radius: 8px; font-weight: 700; font-size: 15px; }
+  .inv-tot-final span:last-child { color: #8ca3c7; }
+
+  .inv-notes { background: #f0f4f8; border-radius: 7px; padding: 13px 16px; margin-bottom: 22px; font-size: 12px; color: #3b5070; border-left: 3px solid #5b8def; }
+  .inv-notes-lbl { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #1e2d42; margin-bottom: 4px; }
+  
+  .inv-bottom-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 0 36px 10px;
+  }
+  .inv-photo-box {
+    width: 640px;
+    height: 480px;
+    border: 1px dashed #a0b2ce;
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f8fafc;
+    position: relative;
+  }
+  .inv-photo-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .inv-footer { text-align: center; font-size: 11px; color: #7a92b8; padding: 14px 0 22px; border-top: 1px solid #d0dbe7; width: 100%; }
+
+  .cur-pills { display: flex; gap: 3px; justify-content: flex-end; margin-top: 4px; }
+  .cur-pill {
+    font-family: 'Outfit', sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    line-height: 1.4;
+    letter-spacing: 0.03em;
+  }
+  .cur-pill:hover { border-color: var(--accent); color: var(--accent); }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .panel-preview { display: none; }
+    .panel-form { max-height: none; }
+  }
+  @media (max-width: 500px) {
+    .row-2, .row-3, .row-4 { grid-template-columns: 1fr; }
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ════════ LEFT: FORM ════════ -->
+  <div class="panel-form">
+
+    <div class="app-header">
+      <div class="logo-mark">I</div>
+      <div class="logo-text">Invoice<span>.</span></div>
+    </div>
+
+    <!-- Data Import Section -->
+    <div class="section" style="margin-bottom:28px">
+      <div class="section-header">Auto Fill Data</div>
+      <div class="section-body" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <label class="file-btn">
+          📄 Upload Excel / CSV
+          <input type="file" id="excelInput" accept=".xlsx, .xls, .csv" style="display:none" onchange="handleExcelUpload(event)">
+        </label>
+        <label class="file-btn">
+          📷 Upload Photo Quotation
+          <input type="file" id="quotePhotoInput" accept="image/*" style="display:none" onchange="handleQuotePhotoUpload(event)">
+        </label>
+        <span id="importStatus" style="font-size:12px; color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- Invoice Details -->
+    <div class="section">
+      <div class="section-header">Invoice Details</div>
+      <div class="section-body">
+        <div class="row row-4" style="margin-bottom:14px">
+          <div class="field">
+            <label>Invoice #</label>
+            <input type="text" id="invoiceNumber" value="INV-001" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>Currency</label>
+            <select id="currency" onchange="renderPreview()">
+              <option>USD</option><option>EUR</option><option>GBP</option>
+              <option>JPY</option><option>CAD</option><option>AUD</option><option>CHF</option>
+              <option>RMB</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Issue Date</label>
+            <input type="date" id="issueDate" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>Due Date</label>
+            <input type="date" id="dueDate" oninput="renderPreview()">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- From / To -->
+    <div class="row row-2" style="margin-bottom:28px">
+      <div class="section">
+        <div class="section-header">From (Seller / You)</div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:10px">
+          <div class="field">
+            <label>Name / Company</label>
+            <input type="text" id="fromName" value="Your Company" placeholder="Your Name or Company" oninput="renderPreview()">
+          </div>
+          <div class="field"><label>Email</label><input type="email" id="fromEmail" placeholder="hello@yourco.com" oninput="renderPreview()"></div>
+          <div class="field"><label>Address</label><textarea id="fromAddress" rows="2" placeholder="123 Main St&#10;City, Country" oninput="renderPreview()"></textarea></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-header">Bill To (Client)</div>
+        <div class="section-body" style="display:flex;flex-direction:column;gap:10px">
+          <div class="field"><label>Client Name</label><input type="text" id="toName" placeholder="Client Name" oninput="renderPreview()"></div>
+          <div class="field"><label>Client Email</label><input type="email" id="toEmail" placeholder="client@company.com" oninput="renderPreview()"></div>
+          <div class="field"><label>Address</label><textarea id="toAddress" rows="2" placeholder="456 Client Ave&#10;City, Country" oninput="renderPreview()"></textarea></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line Items -->
+    <div class="section" style="margin-bottom:28px">
+      <div class="section-header">Line Items</div>
+      <div class="section-body">
+        <table class="items-table" id="itemsTable">
+          <thead>
+            <tr>
+              <th style="width:44%">Description</th>
+              <th style="width:10%">Qty</th>
+              <th style="width:18%">Rate</th>
+              <th style="width:20%">Amount</th>
+              <th style="width:8%"></th>
+            </tr>
+          </thead>
+          <tbody id="itemsBody"></tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+          <button class="add-item-btn" onclick="addItem()">+ Add Line Item</button>
+          <div class="totals" style="min-width:240px">
+            <div class="tot-row">
+              <span>Subtotal</span>
+              <span id="subtotalDisplay">$0.00</span>
+            </div>
+            <div class="tot-row tax-row">
+              <div class="tax-inputs">
+                <span>Tax</span>
+                <input class="tax-input-small" type="number" id="taxRate" value="0" min="0" max="100" step="0.1" oninput="renderPreview()">
+                <span style="color:var(--muted)">%</span>
+              </div>
+              <span id="taxDisplay">$0.00</span>
+            </div>
+            <div class="total-final">
+              <span>Total</span>
+              <span id="totalDisplay">$0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Photo Attachment -->
+    <div class="section" style="margin-bottom:28px">
+      <div class="section-header">Photo Attachments (Resized to 640x480)</div>
+      <div class="section-body">
+        <div class="field">
+          <label class="file-btn" style="width:fit-content; margin-bottom:10px;">
+            🖼️ Select Image Photos
+            <input type="file" id="photoInput" accept="image/*" multiple style="display:none" onchange="handlePhotoUpload(event)">
+          </label>
+          <div id="photoPreviewContainer" style="display:none; flex-wrap:wrap; gap:12px; align-items:center;">
+            <!-- Thumbnails inserted here dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="section" style="margin-bottom:28px">
+      <div class="section-header">Notes (Optional)</div>
+      <div class="section-body">
+        <div class="field">
+          <label>Payment instructions or additional notes</label>
+          <textarea id="notes" rows="3" placeholder="e.g. Payment due within 30 days of invoice date." oninput="renderPreview()"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bank Account Details -->
+    <div class="section" style="margin-bottom:28px">
+      <div class="section-header">Bank Account Details</div>
+      <div class="section-body">
+        <div class="row row-2" style="margin-bottom:14px">
+          <div class="field">
+            <label>Bank Name</label>
+            <input type="text" id="bankName" placeholder="e.g. HSBC / Bank of China" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>Account Name</label>
+            <input type="text" id="bankAccName" placeholder="e.g. Your Company Ltd" oninput="renderPreview()">
+          </div>
+        </div>
+        <div class="row row-2" style="margin-bottom:14px">
+          <div class="field">
+            <label>Account Number</label>
+            <input type="text" id="bankAccNum" placeholder="e.g. 123-456-789" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>Swift / BIC Code</label>
+            <input type="text" id="bankSwift" placeholder="e.g. HSBCHKHHHKH" oninput="renderPreview()">
+          </div>
+        </div>
+        <div class="row row-2">
+          <div class="field">
+            <label>IBAN (Optional)</label>
+            <input type="text" id="bankIban" placeholder="e.g. HK12 3456 7890 1234 5678" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>Routing / Sort Code (Optional)</label>
+            <input type="text" id="bankRouting" placeholder="e.g. 04-00-75" oninput="renderPreview()">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Download -->
+    <button class="download-btn" id="dlBtn" onclick="downloadPDF()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download Invoice PDF
+    </button>
+    <div class="status-msg" id="statusMsg"></div>
+
+  </div><!-- /panel-form -->
+
+
+  <!-- ════════ RIGHT: LIVE PREVIEW ════════ -->
+  <div class="panel-preview">
+    <div class="preview-label">Live Preview</div>
+    <div class="inv-card" id="previewCard">
+      <!-- rendered by JS -->
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let items = [{ id: 1, description: '', qty: 1, rate: 0, currency: 'USD' }];
+let nextId = 2;
+const ITEM_CURRENCIES = ['USD', 'HKD', 'RMB'];
+let uploadedPhotos = []; // Store multiple photo data URLs
+
+// ── Init ───────────────────────────────────────────────────────────────────
+window.onload = () => {
+  document.getElementById('issueDate').value = today();
+  renderItems();
+  renderPreview();
+};
+
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fmtMoney(val, currency) {
+  try {
+    const iso = currency === 'RMB' ? 'CNY' : (currency || 'USD');
+    const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: iso }).format(val || 0);
+    return currency === 'RMB' ? formatted.replace(/CN¥|CNY\s?/, '¥') : formatted;
+  } catch(e) {
+    return (val || 0).toFixed(2);
+  }
+}
+
+// ── Robust number / currency parsing ─────────────────────────────────────
+function parseNum(raw) {
+  if (raw === null || raw === undefined) return NaN;
+  let s = String(raw).trim();
+  if (!s) return NaN;
+
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1).trim(); }
+  if (/^-/.test(s)) neg = true;
+
+  s = s.replace(/[^\d.,-]/g, '');
+  if (!s) return NaN;
+  s = s.replace(/(?!^)-/g, '');
+
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+
+  if (lastComma > -1 && lastDot > -1) {
+    if (lastComma > lastDot) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (lastComma > -1) {
+    const digitsAfter = s.length - lastComma - 1;
+    if (digitsAfter === 3) s = s.replace(/,/g, '');
+    else s = s.replace(',', '.');
+  }
+
+  const n = parseFloat(s);
+  if (isNaN(n)) return NaN;
+  return neg ? -Math.abs(n) : n;
+}
+
+function detectCurrency(str) {
+  if (!str) return null;
+  const s = String(str);
+  if (/HK\s?\$|HKD/i.test(s)) return 'HKD';
+  if (/¥|RMB|CNY|RM\b/i.test(s)) return 'RMB';
+  if (/US\s?\$|\$|USD/i.test(s)) return 'USD';
+  return null;
+}
+
+function setItemCurrency(id, cur) {
+  items = items.map(i => i.id === id ? { ...i, currency: cur } : i);
+  const item = items.find(i => i.id === id);
+  if (item) {
+    const amt = (+item.qty||0) * (+item.rate||0);
+    const amtEl = document.getElementById(`amt-${id}`);
+    if (amtEl) amtEl.textContent = fmtMoney(amt, item.currency);
+    ITEM_CURRENCIES.forEach(c => {
+      const btn = document.getElementById(`cur-${id}-${c}`);
+      if (btn) {
+        const active = c === cur;
+        btn.style.background  = active ? 'var(--accent)' : 'transparent';
+        btn.style.color       = active ? '#ffffff'       : 'var(--muted)';
+        btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+        btn.style.fontWeight  = active ? '700'           : '500';
+      }
+    });
+  }
+  updateTotalsDisplay();
+  updatePreviewItemsOnly();
+}
+
+function getField(id) {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : '';
+}
+
+function calcTotals() {
+  const currency = getField('currency') || 'USD';
+  const subtotal = items.reduce((s, i) => s + ((+i.qty || 0) * (+i.rate || 0)), 0);
+  const taxRate  = parseFloat(document.getElementById('taxRate')?.value) || 0;
+  const tax      = subtotal * (taxRate / 100);
+  const total    = subtotal + tax;
+  return { subtotal, tax, total, taxRate, currency };
+}
+
+// ── Image Resizing (640x480 Canvas) & Multiple Upload Support ───────────────
+function handlePhotoUpload(e) {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+
+  let loadedCount = 0;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        const scale = Math.min(640 / img.width, 480 / img.height);
+        const x = (640 - img.width * scale) / 2;
+        const y = (480 - img.height * scale) / 2;
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+        uploadedPhotos.push(canvas.toDataURL('image/jpeg', 0.85));
+
+        loadedCount++;
+        if (loadedCount === files.length) {
+          renderPhotoThumbs();
+          renderPreview();
+        }
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderPhotoThumbs() {
+  const container = document.getElementById('photoPreviewContainer');
+  if (uploadedPhotos.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'flex';
+  container.innerHTML = uploadedPhotos.map((url, index) => `
+    <div style="display:flex; align-items:center; gap:6px; background:var(--bg); padding:6px; border-radius:8px; border:1px solid var(--border);">
+      <img src="${url}" style="width:80px; height:60px; object-fit:cover; border-radius:6px;">
+      <button class="remove-btn" onclick="removePhoto(${index})" style="font-size:12px; text-decoration:underline;">Remove</button>
+    </div>
+  `).join('');
+}
+
+function removePhoto(index) {
+  uploadedPhotos.splice(index, 1);
+  if (uploadedPhotos.length === 0) {
+    document.getElementById('photoInput').value = '';
+  }
+  renderPhotoThumbs();
+  renderPreview();
+}
+
+// ── Data Extraction (Excel & Photo Quotations) ─────────────────────────────
+function handleExcelUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('importStatus');
+  status.textContent = 'Parsing Excel file...';
+
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    try {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+      
+      extractAndSetItems(json);
+      status.textContent = '✓ Data imported!';
+    } catch(err) {
+      console.error(err);
+      status.textContent = '✗ Import failed.';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+const OCR_SKIP_LINE_RE = /\b(sub\s*total|grand\s*total|balance\s*due|amount\s*due|total\s*due|^total\b|\btax\b|\bvat\b|\bdiscount\b|\bshipping\b|quotation\s*(no|#)?|invoice\s*(no|#)?|^date\b|page\s*\d+|^description\s+qty|^item\s+qty)/i;
+const OCR_CURRENCY_NUM_RE = /(?:US\$|HK\$|RM\$?|[$€£¥])\s?(-?[\d,]+(?:\.\d{1,2})?)/gi;
+const OCR_QTY_MARKED_RE = /(?:qty|quantity)[:\s]*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:pcs?\.?|pieces?|units?|nos?\.?)\b/gi;
+const OCR_GENERIC_NUM_RE = /-?\d[\d,]*(?:\.\d+)?(?![a-zA-Z])/g;
+
+function stripLeadingIndex(line) {
+  const m = line.match(/^\s*(?:item\s*)?#?(\d{1,3})\s*[\.\):\-]\s+(.*)$/i);
+  if (m && /\d/.test(m[2])) return m[2];
+  return line;
+}
+
+function parseOcrLine(rawLine) {
+  if (!rawLine || OCR_SKIP_LINE_RE.test(rawLine)) return null;
+  const line = stripLeadingIndex(rawLine);
+
+  const currencyMatches = [...line.matchAll(OCR_CURRENCY_NUM_RE)];
+  const qtyMatches = [...line.matchAll(OCR_QTY_MARKED_RE)];
+
+  let rate = null, qty = null, currency = null;
+
+  if (currencyMatches.length > 0) {
+    const m = currencyMatches[currencyMatches.length - 1];
+    rate = parseNum(m);
+    currency = detectCurrency(m[0]);
+  }
+  if (qtyMatches.length > 0) {
+    const m = qtyMatches[0];
+    qty = parseNum(m || m[2]);
+  }
+
+  let descLine = line;
+  currencyMatches.forEach(m => { descLine = descLine.replace(m[0], ' '); });
+  qtyMatches.forEach(m => { descLine = descLine.replace(m[0], ' '); });
+
+  if (rate === null || qty === null) {
+    const genericMatches = [...descLine.matchAll(OCR_GENERIC_NUM_RE)];
+    const genericNums = genericMatches.map(m => parseNum(m[0]));
+    let usedIdx = -1;
+
+    if (rate === null && genericNums.length > 0) {
+      const decimalIdx = genericMatches.findIndex(m => m[0].includes('.'));
+      usedIdx = decimalIdx >= 0 ? decimalIdx : genericNums.length - 1;
+      if (!isNaN(genericNums[usedIdx])) rate = genericNums[usedIdx];
+    }
+    if (qty === null) {
+      const leftover = genericNums.find((n, i) => i !== usedIdx && !isNaN(n));
+      if (leftover !== undefined) qty = leftover;
+    }
+    genericMatches.forEach(m => { descLine = descLine.replace(m[0], ' '); });
+  }
+
+  descLine = descLine.replace(OCR_GENERIC_NUM_RE, ' ')
+    .replace(/[|_~`]+/g, ' ')
+    .replace(/(^|\s)[x×](\s|$)/gi, ' ')
+    .replace(/^[\s\-:.,@]+|[\s\-:.,@]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (rate === null || isNaN(rate)) return null;
+
+  return {
+    description: descLine || 'Item',
+    qty: (qty === null || isNaN(qty) || qty <= 0) ? 1 : qty,
+    rate,
+    currency: currency || 'USD',
+  };
+}
+
+async function handleQuotePhotoUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('importStatus');
+  status.textContent = 'Processing OCR (Reading image)...';
+
+  try {
+    const result = await Tesseract.recognize(file, 'eng');
+    const lines = result.data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const extractedRows = lines.map(parseOcrLine).filter(Boolean);
+
+    if (extractedRows.length > 0) {
+      items = extractedRows.map((r, idx) => ({
+        id: idx + 1,
+        description: r.description,
+        qty: r.qty,
+        rate: r.rate,
+        currency: r.currency
+      }));
+      nextId = items.length + 1;
+      renderItems();
+      renderPreview();
+      status.textContent = `✓ Quotation photo extracted (${extractedRows.length} item${extractedRows.length === 1 ? '' : 's'})!`;
+    } else {
+      status.textContent = '✗ Could not match rows. Try a clearer photo or the Excel/CSV import instead.';
+    }
+  } catch(err) {
+    console.error(err);
+    status.textContent = '✗ OCR failed.';
+  }
+}
+
+const DESC_COL_RULES = [
+  [/\bitem\s*(name|description)\b/, 4], [/\bproduct\s*(name|description)\b/, 4],
+  [/\bdescription\b/, 3], [/\bparticulars\b/, 3], [/\bgoods\b/, 2],
+  [/\bitem\b/, 2], [/\bproduct\b/, 2], [/\bmaterial\b/, 2],
+];
+const QTY_COL_RULES = [
+  [/\bquantity\b/, 3], [/\bqty\b/, 3], [/\bpieces\b/, 2], [/\bpcs?\.?\b/, 2],
+];
+const RATE_COL_RULES = [
+  [/\bunit\s*price\b/, 5], [/\bunit\s*cost\b/, 5], [/\bprice\s*\/\s*unit\b/, 5],
+  [/\brate\b/, 4], [/\bcost\b/, 2], [/\bprice\b/, 2],
+  [/[$€£¥]/, 1],
+  [/\bsub\s*total\b/, -6], [/\bgrand\s*total\b/, -6], [/\btotal\b/, -5], [/\bamount\b/, -3], [/\bsum\b/, -3],
+];
+
+function scoreCell(text, rules) {
+  let score = 0;
+  rules.forEach(([re, pts]) => { if (re.test(text)) score += pts; });
+  return score;
+}
+
+function detectColumns(headerRow) {
+  const header = (headerRow || []).map(c => String(c ?? '').toLowerCase().trim());
+  const roleRules = { desc: DESC_COL_RULES, qty: QTY_COL_RULES, rate: RATE_COL_RULES };
+  const candidates = [];
+  let totalScore = 0;
+  Object.keys(roleRules).forEach(role => {
+    header.forEach((h, col) => {
+      const score = scoreCell(h, roleRules[role]);
+      if (score > 0) { candidates.push({ role, col, score }); totalScore += score; }
+    });
+  });
+  candidates.sort((a, b) => b.score - a.score);
+  const cols = {};
+  const used = new Set();
+  candidates.forEach(({ role, col, score }) => {
+    if (cols[role] === undefined && !used.has(col)) { cols[role] = col; used.add(col); }
+  });
+
+  let secondaryDesc;
+  const descCandidates = candidates.filter(c => c.role === 'desc').sort((a, b) => b.score - a.score);
+  const secondDescMatch = descCandidates.find(c => c.col !== cols.desc && !used.has(c.col));
+  if (secondDescMatch) { secondaryDesc = secondDescMatch.col; used.add(secondaryDesc); }
+
+  return { cols, totalScore, matchedRoles: Object.keys(cols).length, secondaryDesc };
+}
+
+function findHeaderRowIndex(rows) {
+  const maxScan = Math.min(rows.length - 1, 8);
+  let bestIdx = 0, bestScore = -Infinity;
+  for (let i = 0; i < maxScan; i++) {
+    const { totalScore, matchedRoles } = detectColumns(rows[i]);
+    if (matchedRoles >= 2 && totalScore > bestScore) { bestScore = totalScore; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function extractAndSetItems(rows) {
+  if (!rows || rows.length < 2) return;
+
+  const headerRowIdx = findHeaderRowIndex(rows);
+  const { cols, secondaryDesc } = detectColumns(rows[headerRowIdx]);
+
+  const used = new Set(Object.values(cols));
+  if (secondaryDesc !== undefined) used.add(secondaryDesc);
+  const nextFreeCol = () => {
+    let c = 0;
+    while (used.has(c) && c < 20) c++;
+    used.add(c);
+    return c;
+  };
+  const descCol = cols.desc !== undefined ? cols.desc : nextFreeCol();
+  const qtyCol  = cols.qty  !== undefined ? cols.qty  : nextFreeCol();
+  const rateCol = cols.rate !== undefined ? cols.rate : nextFreeCol();
+
+  const docCurrency = getField('currency') || 'USD';
+  const SKIP_ROW_RE = /^(sub\s*total|grand\s*total|total|tax|vat|discount|shipping|balance\s*due)\b/i;
+
+  const newItems = [];
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const descRaw = row[descCol];
+    let desc = descRaw !== undefined && descRaw !== null ? String(descRaw).trim() : '';
+    if (secondaryDesc !== undefined) {
+      const extraRaw = row[secondaryDesc];
+      const extra = extraRaw !== undefined && extraRaw !== null ? String(extraRaw).trim() : '';
+      if (extra) desc = desc ? `${desc} — ${extra}` : extra;
+    }
+    if (SKIP_ROW_RE.test(desc)) continue;
+
+    const qtyRaw = row[qtyCol], rateRaw = row[rateCol];
+    const qtyBlank  = qtyRaw  === undefined || qtyRaw  === null || String(qtyRaw).trim()  === '';
+    const rateBlank = rateRaw === undefined || rateRaw === null || String(rateRaw).trim() === '';
+
+    if (!desc && qtyBlank && rateBlank) continue;
+
+    if (desc && qtyBlank && rateBlank && newItems.length > 0) {
+      const prev = newItems[newItems.length - 1];
+      prev.description = prev.description ? `${prev.description}\n${desc}` : desc;
+      continue;
+    }
+
+    const qtyParsed = parseNum(qtyRaw);
+    const rateParsed = parseNum(rateRaw);
+    const qty = isNaN(qtyParsed) || qtyParsed <= 0 ? 1 : qtyParsed;
+    const rate = isNaN(rateParsed) ? 0 : rateParsed;
+
+    const currency = detectCurrency(rateRaw) || docCurrency;
+
+    if (desc || rate) {
+      newItems.push({ id: newItems.length + 1, description: desc, qty, rate, currency });
+    }
+  }
+
+  if (newItems.length > 0) {
+    items = newItems;
+    nextId = items.length + 1;
+    renderItems();
+    renderPreview();
+  }
+}
+
+// ── Items ──────────────────────────────────────────────────────────────────
+function addItem() {
+  items.push({ id: nextId++, description: '', qty: 1, rate: 0, currency: 'USD' });
+  renderItems();
+  renderPreview();
+}
+
+function removeItem(id) {
+  if (items.length <= 1) return;
+  items = items.filter(i => i.id !== id);
+  renderItems();
+  renderPreview();
+}
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
+function onDescriptionInput(id, el) {
+  items = items.map(i => i.id === id ? { ...i, description: el.value } : i);
+  autoGrow(el);
+  updatePreviewItemsOnly();
+}
+
+function onNumericInput(id, key, val) {
+  items = items.map(i => i.id === id ? { ...i, [key]: val } : i);
+  const item = items.find(i => i.id === id);
+  if (item) {
+    const amt = (+item.qty||0) * (+item.rate||0);
+    const amtEl = document.getElementById(`amt-${id}`);
+    if (amtEl) amtEl.textContent = fmtMoney(amt, item.currency);
+  }
+  updateTotalsDisplay();
+  updatePreviewItemsOnly();
+}
+
+function updatePreviewItemsOnly() {
+  const { currency, subtotal, tax, total, taxRate } = calcTotals();
+  const visItems = items.filter(i => i.description || +i.rate);
+  const tbody = document.getElementById('previewItemRows');
+  if (!tbody) { renderPreview(); return; }
+  tbody.innerHTML = visItems.map(item => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;white-space:pre-wrap">${esc(item.description) || '—'}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right">${item.qty}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right">${fmtMoney(item.rate, item.currency)} <span style="font-size:10px;color:#7a92b8">${item.currency||'USD'}</span></td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right;font-weight:600">${fmtMoney((+item.qty||0)*(+item.rate||0), item.currency)}</td>
+    </tr>`).join('') || '<tr><td colspan="4" style="color:#7a92b8;padding:12px 0">No items yet</td></tr>';
+
+  const pSub  = document.getElementById('prev-subtotal');
+  const pTax  = document.getElementById('prev-tax');
+  const pTot  = document.getElementById('prev-total');
+  const pTaxL = document.getElementById('prev-tax-label');
+  if (pSub)  pSub.textContent  = fmtMoney(subtotal, currency);
+  if (pTax)  pTax.textContent  = fmtMoney(tax, currency);
+  if (pTot)  pTot.textContent  = fmtMoney(total, currency);
+  if (pTaxL) pTaxL.textContent = `Tax (${taxRate}%)`;
+}
+
+function updateTotalsDisplay() {
+  const { subtotal, tax, total, currency } = calcTotals();
+  document.getElementById('subtotalDisplay').textContent = fmtMoney(subtotal, currency);
+  document.getElementById('taxDisplay').textContent      = fmtMoney(tax, currency);
+  document.getElementById('totalDisplay').textContent    = fmtMoney(total, currency);
+}
+
+function renderItems() {
+  const { currency } = calcTotals();
+  const tbody = document.getElementById('itemsBody');
+  tbody.innerHTML = items.map(item => {
+    const amount = (+item.qty || 0) * (+item.rate || 0);
+    return `<tr>
+      <td style="vertical-align:top;padding:6px 8px">
+        <textarea
+          placeholder="Item description"
+          oninput="onDescriptionInput(${item.id},this)"
+          onfocusin="this.style.borderColor='var(--accent)';this.style.background='rgba(91,141,239,0.08)'"
+          onfocusout="this.style.borderColor='transparent';this.style.background='transparent'"
+          style="width:100%;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--text);font-family:'Outfit',sans-serif;font-size:13px;padding:6px 8px;outline:none;resize:none;overflow:hidden;line-height:1.55;min-height:34px;display:block;transition:border-color 0.15s;box-sizing:border-box;"
+        >${esc(item.description)}</textarea>
+      </td>
+      <td style="vertical-align:top;padding:8px 8px;text-align:right">
+        <input type="number" value="${item.qty}" min="0" style="width:56px;text-align:right;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--text);font-family:'Outfit',sans-serif;font-size:13px;padding:6px 7px;outline:none;transition:border-color 0.15s;"
+          oninput="onNumericInput(${item.id},'qty',this.value)"
+          onfocusin="this.style.borderColor='var(--accent)';this.style.background='rgba(91,141,239,0.08)'"
+          onfocusout="this.style.borderColor='transparent';this.style.background='transparent'">
+      </td>
+      <td style="vertical-align:top;padding:8px 8px;text-align:right">
+        <input type="number" value="${item.rate}" min="0" step="0.01" style="width:90px;text-align:right;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--text);font-family:'Outfit',sans-serif;font-size:13px;padding:6px 7px;outline:none;transition:border-color 0.15s;"
+          oninput="onNumericInput(${item.id},'rate',this.value)"
+          onfocusin="this.style.borderColor='var(--accent)';this.style.background='rgba(91,141,239,0.08)'"
+          onfocusout="this.style.borderColor='transparent';this.style.background='transparent'">
+        <div class="cur-pills">
+          ${ITEM_CURRENCIES.map(c => {
+            const active = (item.currency || 'USD') === c;
+            return `<button id="cur-${item.id}-${c}" class="cur-pill"
+              onclick="setItemCurrency(${item.id},'${c}')"
+              style="background:${active ? 'var(--accent)' : 'transparent'};color:${active ? '#ffffff' : 'var(--muted)'};border-color:${active ? 'var(--accent)' : 'var(--border)'};font-weight:${active ? '700' : '500'};"
+            >${c}</button>`;
+          }).join('')}
+        </div>
+      </td>
+      <td style="vertical-align:top;padding:10px 8px;text-align:right">
+        <span class="item-amount" id="amt-${item.id}">${fmtMoney(amount, currency)}</span>
+      </td>
+      <td style="vertical-align:top;padding:6px 4px;text-align:center">
+        ${items.length > 1 ? `<button class="remove-btn" onclick="removeItem(${item.id})">×</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('textarea').forEach(autoGrow);
+  updateTotalsDisplay();
+}
+
+function esc(str) {
+  return (str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────
+function renderPreview() {
+  const { subtotal, tax, total, taxRate, currency } = calcTotals();
+  const fromName    = getField('fromName')    || 'Your Company';
+  const fromEmail   = getField('fromEmail');
+  const fromAddress = getField('fromAddress');
+  const toName      = getField('toName')      || 'Client Name';
+  const toEmail     = getField('toEmail');
+  const toAddress   = getField('toAddress');
+  const invNum      = getField('invoiceNumber') || '—';
+  const issueDate   = getField('issueDate')   || '—';
+  const dueDate     = getField('dueDate')     || '—';
+  const notes       = getField('notes');
+  const bankName    = getField('bankName');
+  const bankAccName = getField('bankAccName');
+  const bankAccNum  = getField('bankAccNum');
+  const bankSwift   = getField('bankSwift');
+  const bankIban    = getField('bankIban');
+  const bankRouting = getField('bankRouting');
+  const hasBank     = bankName || bankAccName || bankAccNum || bankSwift || bankIban || bankRouting;
+
+  const visItems = items.filter(i => i.description || +i.rate);
+
+  const itemRows = visItems.map(item => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;white-space:pre-wrap">${esc(item.description) || '—'}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right">${item.qty}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right">${fmtMoney(item.rate, item.currency)} <span style="font-size:10px;color:#7a92b8">${item.currency||'USD'}</span></td>
+      <td style="padding:10px 0;border-bottom:1px solid #d0dbe7;font-size:13px;text-align:right;font-weight:600">${fmtMoney((+item.qty||0)*(+item.rate||0), item.currency)}</td>
+    </tr>`).join('');
+
+  const notesHtml = notes ? `
+    <div class="inv-notes">
+      <div class="inv-notes-lbl">Notes</div>
+      <div style="white-space:pre-line">${esc(notes)}</div>
+    </div>` : '';
+
+  const bankRows = [
+    bankName    ? `<tr><td style="color:#888;font-size:11px;padding:4px 0;width:38%">Bank Name</td><td style="font-size:12px;font-weight:600;padding:4px 0">${esc(bankName)}</td></tr>` : '',
+    bankAccName ? `<tr><td style="color:#888;font-size:11px;padding:4px 0">Account Name</td><td style="font-size:12px;font-weight:600;padding:4px 0">${esc(bankAccName)}</td></tr>` : '',
+    bankAccNum  ? `<tr><td style="color:#888;font-size:11px;padding:4px 0">Account No.</td><td style="font-size:12px;font-weight:600;padding:4px 0;letter-spacing:0.04em">${esc(bankAccNum)}</td></tr>` : '',
+    bankSwift   ? `<tr><td style="color:#888;font-size:11px;padding:4px 0">Swift / BIC</td><td style="font-size:12px;font-weight:600;padding:4px 0;letter-spacing:0.06em">${esc(bankSwift)}</td></tr>` : '',
+    bankIban    ? `<tr><td style="color:#888;font-size:11px;padding:4px 0">IBAN</td><td style="font-size:12px;font-weight:600;padding:4px 0;letter-spacing:0.04em">${esc(bankIban)}</td></tr>` : '',
+    bankRouting ? `<tr><td style="color:#888;font-size:11px;padding:4px 0">Routing / Sort</td><td style="font-size:12px;font-weight:600;padding:4px 0;letter-spacing:0.04em">${esc(bankRouting)}</td></tr>` : '',
+  ].join('');
+
+  const bankHtml = hasBank ? `
+    <div style="background:#f0f4f8;border-radius:7px;padding:14px 18px;margin-bottom:22px;border-left:3px solid #1e2d42;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#1e2d42;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1e2d42" stroke-width="2.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2M12 12v4M8 12h8"/></svg>
+        Bank Account Details
+      </div>
+      <table style="width:100%;border-collapse:collapse">${bankRows}</table>
+    </div>` : '';
+
+  const fromLines = [
+    fromEmail   ? `<div>${esc(fromEmail)}</div>`   : '',
+    fromAddress ? `<div style="white-space:pre-line">${esc(fromAddress)}</div>` : '',
+  ].join('');
+
+  const toLines = [
+    toEmail   ? `<div class="inv-sub">${esc(toEmail)}</div>`   : '',
+    toAddress ? `<div class="inv-sub" style="white-space:pre-line">${esc(toAddress)}</div>` : '',
+  ].join('');
+
+  const photoHtml = uploadedPhotos.length > 0 ? uploadedPhotos.map(url => `
+    <div class="inv-photo-box">
+      <img src="${url}" alt="Attachment">
+    </div>
+  `).join('') : '<div></div>';
+
+  document.getElementById('previewCard').innerHTML = `
+    <div>
+      <div class="inv-header">
+        <div>
+          <div class="inv-title">INVOICE</div>
+          <div class="inv-num">#${esc(invNum)}</div>
+        </div>
+        <div class="inv-from">
+          <div class="inv-from-name">${esc(fromName)}</div>
+          ${fromLines}
+        </div>
+      </div>
+      <div class="inv-stripe"></div>
+
+      <div class="inv-meta">
+        <div class="inv-bill">
+          <div class="inv-lbl">Bill To</div>
+          <div class="inv-val">${esc(toName)}</div>
+          ${toLines}
+        </div>
+        <div class="inv-dates">
+          <div>
+            <div class="inv-lbl">Issue Date</div>
+            <div class="inv-val">${esc(issueDate)}</div>
+          </div>
+          <div>
+            <div class="inv-lbl">Due Date</div>
+            <div class="inv-val">${esc(dueDate)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inv-body">
+        <table class="inv-table">
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th style="text-align:right">Qty</th>
+              <th style="text-align:right">Rate</th>
+              <th style="text-align:right">Amount</th>
+            </tr>
+          </thead>
+          <tbody id="previewItemRows">${itemRows || '<tr><td colspan="4" style="color:#aaa;padding:12px 0">No items yet</td></tr>'}</tbody>
+        </table>
+
+        <div class="inv-totals">
+          <div class="inv-totals-inner">
+            <div class="inv-tot-row"><span>Subtotal</span><span id="prev-subtotal">${fmtMoney(subtotal, currency)}</span></div>
+            <div class="inv-tot-row"><span id="prev-tax-label">Tax (${taxRate}%)</span><span id="prev-tax">${fmtMoney(tax, currency)}</span></div>
+            <div class="inv-tot-final"><span>Total Due</span><span id="prev-total">${fmtMoney(total, currency)}</span></div>
+          </div>
+        </div>
+
+        ${notesHtml}
+        ${bankHtml}
+      </div>
+    </div>
+
+    <div>
+      <div class="inv-bottom-container">
+        ${photoHtml}
+      </div>
+      <div class="inv-footer">Thank you for your business.</div>
+    </div>`;
+}
+
+// ── PDF Generation ─────────────────────────────────────────────────────────
+async function downloadPDF() {
+  const btn = document.getElementById('dlBtn');
+  const msg = document.getElementById('statusMsg');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Building PDF…';
+  msg.textContent = '';
+  msg.className = 'status-msg';
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+
+    const W = 612, H = 792, ml = 48, mr = 48, cw = W - ml - mr;
+    const { subtotal, tax, total, taxRate, currency } = calcTotals();
+
+    const fromName    = getField('fromName')    || '—';
+    const fromEmail   = getField('fromEmail');
+    const fromAddress = getField('fromAddress');
+    const toName      = getField('toName')      || '—';
+    const toEmail     = getField('toEmail');
+    const toAddress   = getField('toAddress');
+    const invNum      = getField('invoiceNumber') || 'INV';
+    const issueDate   = getField('issueDate')   || '—';
+    const dueDate     = getField('dueDate')     || '—';
+    const notes       = getField('notes');
+    const bankName    = getField('bankName');
+    const bankAccName = getField('bankAccName');
+    const bankAccNum  = getField('bankAccNum');
+    const bankSwift   = getField('bankSwift');
+    const bankIban    = getField('bankIban');
+    const bankRouting = getField('bankRouting');
+    const hasBank     = bankName || bankAccName || bankAccNum || bankSwift || bankIban || bankRouting;
+
+    // Colors — Navy Blue palette
+    const INK    = [30,  45,  66];    // Deep Navy
+    const ACC    = [91,  141, 239];   // Accent Blue
+    const ACCLT  = [240, 244, 248];   // Light Tint
+    const CREAM  = [208, 219, 231];   // Cream Border Tint
+    const MUTED  = [91,  115, 152];   // Muted Blue
+    const BORD   = [190, 205, 222];   // Light Border
+    const WHITE  = [255, 255, 255];
+
+    // ── Header Bar ──
+    doc.setFillColor(...INK);
+    doc.rect(0, 0, W, 106, 'F');
+    doc.setFillColor(...ACC);
+    doc.rect(0, 104, W, 3, 'F');
+
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(30);
+    doc.setTextColor(...WHITE);
+    doc.text('INVOICE', ml, 56);
+
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(11);
+    doc.setTextColor(...ACC);
+    doc.text(`#${invNum}`, ml, 74);
+
+    // From info right side
+    let fy = 34;
+    const fromLines2 = [];
+    if (fromName)    fromLines2.push({ t: fromName,    bold: true,  sz: 11,   col: WHITE });
+    if (fromEmail)   fromLines2.push({ t: fromEmail,   bold: false, sz: 9.5,  col: [176, 194, 222] });
+    if (fromAddress) fromAddress.split('\n').forEach(l =>
+      fromLines2.push({ t: l.trim(), bold: false, sz: 9.5, col: [176, 194, 222] }));
+    fromLines2.forEach(({ t, bold, sz, col }) => {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.setFontSize(sz);
+      doc.setTextColor(...col);
+      doc.text(t, W - mr, fy, { align: 'right' });
+      fy += bold ? 15 : 13;
+    });
+
+    // ── Bill To / Dates strip ──
+    doc.setFillColor(...ACCLT);
+    doc.rect(0, 107, W, 80, 'F');
+
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...MUTED);
+    doc.text('BILL TO', ml, 126);
+
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(12);
+    doc.setTextColor(...INK);
+    doc.text(toName, ml, 141);
+
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...MUTED);
+    let by = 155;
+    if (toEmail) { doc.text(toEmail, ml, by); by += 13; }
+    if (toAddress) toAddress.split('\n').forEach(l => { doc.text(l.trim(), ml, by); by += 13; });
+
+    doc.setDrawColor(...BORD);
+    doc.setLineWidth(0.5);
+    doc.line(W/2, 114, W/2, 180);
+
+    const dx = W/2 + 24;
+    [['ISSUE DATE', issueDate], ['DUE DATE', dueDate]].forEach(([lbl, val], i) => {
+      const x = dx + i * 120;
+      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+      doc.text(lbl, x, 126);
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...INK);
+      doc.text(val, x, 141);
+    });
+
+    // ── Line Items ──
+    let y = 212;
+    doc.setFillColor(...CREAM);
+    doc.rect(ml, y - 16, cw, 22, 'F');
+
+    const C0 = ml + 4, C1 = ml + cw*0.55, C2 = ml + cw*0.70, C4 = ml + cw;
+    doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
+    doc.text('DESCRIPTION', C0, y - 2);
+    doc.text('QTY',    C1, y - 2, { align: 'right' });
+    doc.text('RATE',   C2, y - 2, { align: 'right' });
+    doc.text('AMOUNT', C4, y - 2, { align: 'right' });
+
+    doc.setDrawColor(...INK); doc.setLineWidth(1.2);
+    doc.line(ml, y + 4, ml + cw, y + 4);
+    y += 14;
+
+    doc.setLineWidth(0.5); doc.setDrawColor(...BORD);
+    const visItems = items.filter(i => i.description || +i.rate);
+    visItems.forEach((item, idx) => {
+      const amt = (+item.qty||0) * (+item.rate||0);
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(ml, y - 2, cw, 24, 'F');
+      }
+      const descLines = doc.splitTextToSize(item.description || '—', cw * 0.5);
+      doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...INK);
+      doc.text(descLines, C0, y + 12);
+      doc.text(String(item.qty || 0), C1, y + 12, { align: 'right' });
+      doc.text(fmtMoney(item.rate, currency), C2, y + 12, { align: 'right' });
+      doc.setFont('helvetica','bold');
+      doc.text(fmtMoney(amt, currency), C4, y + 12, { align: 'right' });
+      const rowH = Math.max(24, descLines.length * 14 + 10);
+      doc.line(ml, y + rowH, ml + cw, y + rowH);
+      y += rowH;
+    });
+
+    // ── Totals ──
+    y += 20;
+    const totW = 230, totX = W - mr - totW;
+
+    const drawTotRow = (lbl, val, highlight=false) => {
+      if (highlight) {
+        doc.setFillColor(...INK);
+        doc.roundedRect(totX, y - 16, totW, 30, 4, 4, 'F');
+        doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...WHITE);
+        doc.text(lbl, totX + 12, y + 2);
+        doc.setTextColor(...ACC);
+        doc.text(val, totX + totW - 12, y + 2, { align: 'right' });
+        y += 34;
+      } else {
+        doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...MUTED);
+        doc.text(lbl, totX + 12, y);
+        doc.setFont('helvetica','bold'); doc.setTextColor(...INK);
+        doc.text(val, totX + totW - 12, y, { align: 'right' });
+        doc.setDrawColor(...BORD);
+        doc.line(totX, y + 7, totX + totW, y + 7);
+        y += 22;
+      }
+    };
+
+    drawTotRow('Subtotal', fmtMoney(subtotal, currency));
+    drawTotRow(`Tax (${taxRate}%)`, fmtMoney(tax, currency));
+    y += 4;
+    drawTotRow('TOTAL DUE', fmtMoney(total, currency), true);
+
+    // ── Notes ──
+    if (notes) {
+      y += 20;
+      const noteLines = doc.splitTextToSize(notes, cw - 32);
+      const noteH = noteLines.length * 13 + 30;
+      doc.setFillColor(...ACCLT);
+      doc.roundedRect(ml, y, cw, noteH, 5, 5, 'F');
+      doc.setFillColor(...ACC);
+      doc.rect(ml, y, 3, noteH, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+      doc.text('NOTES', ml + 14, y + 16);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...INK);
+      doc.text(noteLines, ml + 14, y + 29);
+      y += noteH;
+    }
+
+    // ── Bank Account Details ──
+    if (hasBank) {
+      y += 20;
+      const BANK_BLUE     = [30, 45, 66];
+      const BANK_BLUE_LT  = [240, 244, 248];
+      const bankFields = [
+        bankName    ? ['Bank Name',      bankName]    : null,
+        bankAccName ? ['Account Name',   bankAccName] : null,
+        bankAccNum  ? ['Account No.',    bankAccNum]  : null,
+        bankSwift   ? ['Swift / BIC',    bankSwift]   : null,
+        bankIban    ? ['IBAN',           bankIban]    : null,
+        bankRouting ? ['Routing / Sort', bankRouting] : null,
+      ].filter(Boolean);
+      const bankH = bankFields.length * 17 + 34;
+      doc.setFillColor(...BANK_BLUE_LT);
+      doc.roundedRect(ml, y, cw, bankH, 5, 5, 'F');
+      doc.setFillColor(...BANK_BLUE);
+      doc.rect(ml, y, 3, bankH, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...BANK_BLUE);
+      doc.text('BANK ACCOUNT DETAILS', ml + 14, y + 16);
+      let by2 = y + 30;
+      const colLabel = ml + 14;
+      const colValue = ml + 110;
+      bankFields.forEach(([label, value]) => {
+        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...MUTED);
+        doc.text(label, colLabel, by2);
+        doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(...INK);
+        doc.text(value, colValue, by2);
+        by2 += 17;
+      });
+      y += bankH;
+    }
+
+    // ── Photo Output (Resized to 640x480 maintaining aspect ratio) ──
+    if (uploadedPhotos.length > 0) {
+      const imgWidth = 240;
+      const imgHeight = 180;
+      let photoX = ml;
+      let photoY = H - 235;
+      
+      uploadedPhotos.forEach(photoUrl => {
+        if (photoX + imgWidth > W - mr) {
+          photoX = ml;
+          photoY -= (imgHeight + 10);
+        }
+        doc.addImage(photoUrl, 'JPEG', photoX, photoY, imgWidth, imgHeight);
+        photoX += imgWidth + 10;
+      });
+    }
+
+    // ── Footer ──
+    doc.setDrawColor(...BORD);
+    doc.line(ml, H - 44, W - mr, H - 44);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...MUTED);
+    doc.text('Thank you for your business.', W/2, H - 28, { align: 'center' });
+
+    doc.save(`${invNum || 'invoice'}.pdf`);
+
+    msg.textContent = '✓ PDF downloaded successfully!';
+    msg.className = 'status-msg status-ok';
+  } catch(err) {
+    console.error(err);
+    msg.textContent = '✗ Something went wrong. Please try again.';
+    msg.className = 'status-msg status-err';
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Invoice PDF`;
+}
+</script>
+</body>
+</html>
